@@ -1,0 +1,24 @@
+name: yt-dlp Execution
+on:
+  repository_dispatch:
+    types: [run-yt-dlp] # 外部（GAS）からの命令を受け取る名前
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install yt-dlp
+        run: pip install yt-dlp
+
+      - name: Run yt-dlp
+        run: |
+          # GASから送られてきた URL を使って実行
+          yt-dlp "${{ github.event.client_payload.url }}" --print filename > result.txt
+          
+      # ここでスプレッドシートやドライブに保存する処理を追加する（ライブラリを使用）
