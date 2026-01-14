@@ -1,4 +1,5 @@
 name: yt-dlp to Google Drive
+
 on:
   repository_dispatch:
     types: [run-yt-dlp]
@@ -20,7 +21,6 @@ jobs:
 
       - name: Run yt-dlp and Upload
         env:
-          # Secretsから環境変数を読み込む
           VIDEO_URL: ${{ github.event.client_payload.url }}
           GDRIVE_SERVICE_ACCOUNT_JSON: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_JSON }}
           GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
