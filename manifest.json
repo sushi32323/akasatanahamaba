@@ -1,0 +1,8 @@
+{
+  "short_name": "EPUBビューア",
+  "name": "EPUB Viewer",
+  "start_url": "index.html",
+  "display": "standalone",
+  "background_color": "#fafafa",
+  "theme_color": "#fafafa"
+}
