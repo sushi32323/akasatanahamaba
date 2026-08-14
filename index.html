@@ -190,6 +190,18 @@
 
   #file-input { display: none; }
 </style>
+  <!-- PWA用のマニフェストとテーマカラー設定 -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#fafafa">
+
+<!-- サービスワーカーの登録 -->
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('sw.js');
+    });
+  }
+</script>
 </head>
 <body>
 <div id="app">
