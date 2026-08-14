@@ -1,0 +1,1657 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>EPUB Viewer</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+  :root {
+    --ui-bg: #fafafa;
+    --ui-panel-bg: #f5f5f5;
+    --ui-border: #e0e0e0;
+    --ui-text: #1a1a1a;
+    --ui-text-sub: #6b6b6b;
+    --ui-accent: #2563eb;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif;
+    background: var(--ui-bg); color: var(--ui-text);
+    overflow: hidden;
+  }
+
+  #app { display: flex; flex-direction: column; height: 100vh; width: 100vw; }
+
+  /* ---------- ヘッダー ---------- */
+  #header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 14px; border-bottom: 1px solid var(--ui-border);
+    background: #fff; flex-shrink: 0; gap: 8px;
+  }
+  #book-title {
+    font-size: 14px; font-weight: 600; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0;
+  }
+  #direction-badge {
+    font-size: 11px; color: var(--ui-text-sub); flex-shrink: 0;
+    padding: 2px 8px; border: 1px solid var(--ui-border); border-radius: 999px;
+  }
+  .header-btn {
+    display: flex; align-items: center; gap: 4px;
+    padding: 7px 11px; font-size: 12px; font-weight: 500;
+    background: #fff; border: 1px solid var(--ui-border); border-radius: 8px;
+    cursor: pointer; color: var(--ui-text); flex-shrink: 0;
+  }
+  .header-btn:hover { background: #f2f2f2; }
+  .header-btn svg { width: 14px; height: 14px; }
+
+  /* ---------- 設定パネル ---------- */
+  #settings-overlay {
+    display: none; position: absolute; inset: 0; background: rgba(0,0,0,0.35); z-index: 30;
+  }
+  #settings-overlay.open { display: block; }
+
+  #settings-panel {
+    position: absolute; top: 0; right: 0; bottom: 0; width: min(360px, 92vw);
+    background: var(--ui-panel-bg); border-left: 1px solid var(--ui-border);
+    display: flex; flex-direction: column;
+    transform: translateX(100%); transition: transform 0.22s ease;
+  }
+  #settings-overlay.open #settings-panel { transform: translateX(0); }
+
+  #settings-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 16px; border-bottom: 1px solid var(--ui-border); background: #fff; flex-shrink: 0;
+  }
+  #settings-header span { font-size: 15px; font-weight: 700; }
+  #settings-close-btn {
+    width: 28px; height: 28px; border-radius: 50%; border: none; background: #eee;
+    display: flex; align-items: center; justify-content: center; cursor: pointer;
+  }
+  #settings-close-btn svg { width: 14px; height: 14px; }
+
+  #settings-body { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 22px; }
+
+  .settings-section-title {
+    font-size: 11px; font-weight: 700; color: var(--ui-text-sub);
+    text-transform: uppercase; letter-spacing: 0.04em; margin: 0 0 10px 0;
+  }
+  .setting-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    margin-bottom: 12px;
+  }
+  .setting-row:last-child { margin-bottom: 0; }
+  .setting-label { font-size: 13px; font-weight: 500; }
+  .setting-desc { font-size: 11px; color: var(--ui-text-sub); margin-top: 2px; }
+  .setting-value { font-size: 11px; color: var(--ui-text-sub); min-width: 34px; text-align: right; }
+
+  .settings-card {
+    background: #fff; border: 1px solid var(--ui-border); border-radius: 10px; padding: 14px;
+  }
+
+  .segmented {
+    display: flex; border: 1px solid var(--ui-border); border-radius: 8px; overflow: hidden;
+  }
+  .segmented button {
+    padding: 6px 10px; font-size: 12px; border: none; background: #fff;
+    cursor: pointer; color: var(--ui-text-sub); border-left: 1px solid var(--ui-border);
+  }
+  .segmented button:first-child { border-left: none; }
+  .segmented button.active { background: var(--ui-accent); color: #fff; }
+
+  input[type="range"] { width: 100%; accent-color: var(--ui-accent); }
+
+  .toggle {
+    position: relative; width: 40px; height: 22px; border-radius: 999px;
+    background: #ccc; border: none; cursor: pointer; flex-shrink: 0; padding: 0;
+  }
+  .toggle.on { background: var(--ui-accent); }
+  .toggle::after {
+    content: ""; position: absolute; top: 2px; left: 2px;
+    width: 18px; height: 18px; border-radius: 50%; background: #fff;
+    transition: transform 0.15s ease;
+  }
+  .toggle.on::after { transform: translateX(18px); }
+
+  .swatch-row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .swatch {
+    width: 30px; height: 30px; border-radius: 8px; cursor: pointer;
+    border: 2px solid transparent; flex-shrink: 0;
+  }
+  .swatch.active { border-color: var(--ui-accent); }
+  .swatch.white { background: #ffffff; box-shadow: inset 0 0 0 1px #ddd; }
+  .swatch.black { background: #111111; }
+  .swatch.sepia { background: #f4ecd8; box-shadow: inset 0 0 0 1px #ddd; }
+  .swatch.mint { background: #e8f5ee; box-shadow: inset 0 0 0 1px #ddd; }
+  .swatch.custom-picker {
+    background: conic-gradient(red, yellow, lime, cyan, blue, magenta, red);
+    display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden;
+  }
+  .swatch.custom-picker input[type="color"] {
+    position: absolute; inset: -4px; width: 40px; height: 40px; border: none;
+    opacity: 0; cursor: pointer;
+  }
+
+  #reset-settings-btn {
+    width: 100%; padding: 10px; font-size: 12px; font-weight: 600;
+    background: #fff; border: 1px solid var(--ui-border); border-radius: 8px;
+    color: #c0392b; cursor: pointer;
+  }
+  #reset-settings-btn:hover { background: #fdf1f0; }
+
+  /* ---------- 本文表示エリア ---------- */
+  #reader-area { position: relative; flex: 1; overflow: hidden; min-height: 0; }
+  #content-frame { width: 100%; height: 100%; border: none; display: block; visibility: hidden; }
+  /* デフォルトは非表示。本が読み込まれたら .book-loaded が付与されて表示される。
+     ページ送りOFF時は .paging-disabled が優先され、常に非表示のままになる
+     （iframe側のネイティブなスクロール操作を完全に透過させるため）。 */
+  .tap-zone { position: absolute; top: 0; width: 46%; height: 100%; cursor: pointer; z-index: 5; touch-action: manipulation; display: none; }
+  .tap-zone.left { left: 0; }
+  .tap-zone.right { right: 0; }
+  .tap-zone-center { position: absolute; top: 0; left: 46%; width: 8%; height: 100%; z-index: 5; cursor: default; display: none; }
+  .tap-zone.book-loaded, .tap-zone-center.book-loaded { display: block; }
+  .tap-zone.paging-disabled, .tap-zone-center.paging-disabled { display: none !important; }
+
+  #idle-state, #loading-state, #error-state {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 12px;
+    color: var(--ui-text-sub); font-size: 14px; text-align: center; padding: 0 24px;
+  }
+  #error-state { color: #c0392b; display: none; }
+  #loading-state { display: none; }
+  #idle-state svg { width: 40px; height: 40px; opacity: 0.5; }
+  #idle-open-btn {
+    padding: 9px 18px; font-size: 13px; font-weight: 500;
+    background: var(--ui-accent); color: #fff; border: none; border-radius: 8px; cursor: pointer;
+  }
+
+  /* ---------- フッター ---------- */
+  #footer {
+    display: none; align-items: center; justify-content: space-between;
+    padding: 8px 14px; border-top: 1px solid var(--ui-border);
+    background: #fff; font-size: 11px; color: var(--ui-text-sub); flex-shrink: 0; gap: 8px;
+  }
+  #footer-nav-btns { display: none; gap: 6px; flex-shrink: 0; }
+  #footer-nav-btns.visible { display: flex; }
+  .footer-nav-btn {
+    padding: 4px 10px; font-size: 11px; border: 1px solid var(--ui-border); border-radius: 6px;
+    background: #fff; cursor: pointer; color: var(--ui-text);
+  }
+  .footer-nav-btn:hover { background: #f2f2f2; }
+  .footer-nav-btn:disabled { opacity: 0.4; cursor: default; }
+
+  #resume-toast {
+    display: none; position: absolute; bottom: 54px; left: 50%; transform: translateX(-50%);
+    background: rgba(20,20,20,0.9); color: #fff; padding: 8px 16px; border-radius: 999px;
+    font-size: 12px; z-index: 10; white-space: nowrap;
+  }
+
+  #file-input { display: none; }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <div id="header">
+    <span id="book-title">EPUBビューア</span>
+    <span id="direction-badge" style="display:none;"></span>
+    <button class="header-btn" id="settings-toggle-btn">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      設定
+    </button>
+    <button class="header-btn" id="open-file-btn">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      開く
+    </button>
+    <input type="file" id="file-input" accept=".epub,application/epub+zip">
+  </div>
+
+  <div id="reader-area">
+
+    <div id="settings-overlay">
+      <div id="settings-panel">
+        <div id="settings-header">
+          <span>表示設定</span>
+          <button id="settings-close-btn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div id="settings-body">
+
+          <div>
+            <p class="settings-section-title">文字</p>
+            <div class="settings-card">
+              <div class="setting-row">
+                <span class="setting-label">文字サイズ</span>
+                <span class="setting-value" id="font-size-value">18px</span>
+              </div>
+              <input type="range" id="font-size-slider" min="12" max="32" step="1" value="18">
+              <div class="setting-row" style="margin-top:14px;">
+                <span class="setting-label">フォント</span>
+              </div>
+              <div class="segmented" id="font-family-group" style="width:100%;">
+                <button data-value="serif" style="flex:1;">明朝</button>
+                <button data-value="sans" style="flex:1;">ゴシック</button>
+                <button data-value="system" style="flex:1;">端末標準</button>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <p class="settings-section-title">行間・余白</p>
+            <div class="settings-card">
+              <div class="setting-row">
+                <span class="setting-label">行間</span>
+                <span class="setting-value" id="line-height-value">1.9</span>
+              </div>
+              <input type="range" id="line-height-slider" min="1.3" max="2.6" step="0.1" value="1.9">
+              <div class="setting-row" style="margin-top:14px;">
+                <span class="setting-label">文字間隔</span>
+                <span class="setting-value" id="letter-spacing-value">0px</span>
+              </div>
+              <input type="range" id="letter-spacing-slider" min="0" max="8" step="0.5" value="0">
+              <div class="setting-row" style="margin-top:14px;">
+                <span class="setting-label">余白（マージン）</span>
+                <span class="setting-value" id="margin-value">28px</span>
+              </div>
+              <input type="range" id="margin-slider" min="8" max="64" step="2" value="28">
+            </div>
+          </div>
+
+          <div>
+            <p class="settings-section-title">背景色</p>
+            <div class="settings-card">
+              <div class="swatch-row" id="theme-group">
+                <button class="swatch white" data-value="white" title="白"></button>
+                <button class="swatch black" data-value="black" title="黒"></button>
+                <button class="swatch sepia" data-value="sepia" title="セピア"></button>
+                <button class="swatch mint" data-value="mint" title="ミント"></button>
+                <span class="swatch custom-picker" title="カスタム" id="custom-swatch">
+                  <input type="color" id="custom-color-input" value="#ffffff">
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <p class="settings-section-title">ページめくり</p>
+            <div class="settings-card">
+              <div class="setting-row">
+                <div>
+                  <div class="setting-label">章内ページ送り</div>
+                  <div class="setting-desc">OFFで章単位のみの移動になります</div>
+                </div>
+                <button class="toggle on" id="paging-toggle"></button>
+              </div>
+              <div class="setting-row" style="margin-top:14px;">
+                <div>
+                  <div class="setting-label">めくりアニメーション</div>
+                </div>
+                <button class="toggle on" id="animation-toggle"></button>
+              </div>
+              <div class="setting-row" style="margin-top:14px;">
+                <span class="setting-label">アニメーション速度</span>
+                <span class="setting-value" id="anim-speed-value">0.32s</span>
+              </div>
+              <input type="range" id="anim-speed-slider" min="0.1" max="0.8" step="0.02" value="0.32">
+            </div>
+          </div>
+
+          <div>
+            <p class="settings-section-title">開き方向・タップ</p>
+            <div class="settings-card">
+              <div class="setting-row">
+                <div>
+                  <div class="setting-label">開き方向</div>
+                  <div class="setting-desc">自動判定を手動で上書きできます</div>
+                </div>
+              </div>
+              <div class="segmented" style="width:100%; margin-top:6px;" id="direction-override-group">
+                <button data-value="auto" style="flex:1;">自動</button>
+                <button data-value="vertical" style="flex:1;">縦書き</button>
+                <button data-value="horizontal" style="flex:1;">横書き</button>
+              </div>
+              <div class="setting-row" style="margin-top:14px;">
+                <div>
+                  <div class="setting-label">左右タップを反転</div>
+                  <div class="setting-desc">自動判定と逆の挙動にします</div>
+                </div>
+                <button class="toggle" id="tap-reverse-toggle"></button>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <button id="reset-settings-btn">すべての表示設定をリセット</button>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <div id="idle-state">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+      <span>EPUBファイルを選択してください</span>
+      <button id="idle-open-btn">ファイルを開く</button>
+    </div>
+    <div id="loading-state">読み込み中…</div>
+    <div id="error-state"></div>
+    <iframe id="content-frame" style="display:none;"></iframe>
+    <div class="tap-zone left" id="tap-left"></div>
+    <div class="tap-zone-center" id="tap-center"></div>
+    <div class="tap-zone right" id="tap-right"></div>
+    <div id="resume-toast"></div>
+  </div>
+
+  <div id="footer">
+    <span id="chapter-progress"></span>
+    <div id="footer-nav-btns">
+      <button class="footer-nav-btn" id="footer-prev-btn">← 前の章</button>
+      <button class="footer-nav-btn" id="footer-next-btn">次の章 →</button>
+    </div>
+    <span id="page-progress"></span>
+  </div>
+
+</div>
+
+<script>
+'use strict';
+
+/* =========================================================================
+   定数・ストレージキー
+   ========================================================================= */
+const STORAGE_BOOKMARK_PREFIX = 'epub-viewer-bookmark-';
+const STORAGE_SETTINGS_KEY = 'epub-viewer-settings-v2';
+
+const THEME_PRESETS = {
+  white: { bg: '#ffffff', fg: '#1a1a1a' },
+  black: { bg: '#111111', fg: '#e4e4e4' },
+  sepia: { bg: '#f4ecd8', fg: '#3a2f1f' },
+  mint:  { bg: '#e8f5ee', fg: '#1f3a2c' }
+};
+
+const FONT_FAMILIES = {
+  serif: '"Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", serif',
+  sans: '"Hiragino Sans", "Yu Gothic", "Noto Sans JP", sans-serif',
+  system: '-apple-system, BlinkMacSystemFont, sans-serif'
+};
+
+const DEFAULT_SETTINGS = {
+  fontSizePx: 18,
+  fontFamily: 'serif',
+  lineHeight: 1.9,
+  letterSpacingPx: 0,
+  marginPx: 28,
+  themeKey: 'white',
+  customColor: '#ffffff',
+  useCustomColor: false,
+  pagingEnabled: true,
+  animationEnabled: true,
+  animationSpeedSec: 0.32,
+  directionOverride: 'auto', // 'auto' | 'vertical' | 'horizontal'
+  tapReversed: false
+};
+
+/* =========================================================================
+   アプリ状態
+   ========================================================================= */
+const state = {
+  book: null,
+  fileFingerprint: null,
+  chapterIndex: 0,
+  chapterHtmlCache: new Map(),
+  pageInChapter: 0,
+  totalPagesInChapter: 1,
+  currentChapterPages: null, // 現在の章のページ分割結果（文字列配列）。非ページング時はnull
+  isTurning: false,
+  settings: { ...DEFAULT_SETTINGS }
+};
+
+/* =========================================================================
+   DOM参照
+   ========================================================================= */
+const el = {
+  bookTitle: document.getElementById('book-title'),
+  directionBadge: document.getElementById('direction-badge'),
+  settingsToggleBtn: document.getElementById('settings-toggle-btn'),
+  settingsOverlay: document.getElementById('settings-overlay'),
+  settingsCloseBtn: document.getElementById('settings-close-btn'),
+  openFileBtn: document.getElementById('open-file-btn'),
+  idleOpenBtn: document.getElementById('idle-open-btn'),
+  fileInput: document.getElementById('file-input'),
+  idleState: document.getElementById('idle-state'),
+  loadingState: document.getElementById('loading-state'),
+  errorState: document.getElementById('error-state'),
+  contentFrame: document.getElementById('content-frame'),
+  tapLeft: document.getElementById('tap-left'),
+  tapCenter: document.getElementById('tap-center'),
+  tapRight: document.getElementById('tap-right'),
+  footer: document.getElementById('footer'),
+  chapterProgress: document.getElementById('chapter-progress'),
+  pageProgress: document.getElementById('page-progress'),
+  footerNavBtns: document.getElementById('footer-nav-btns'),
+  footerPrevBtn: document.getElementById('footer-prev-btn'),
+  footerNextBtn: document.getElementById('footer-next-btn'),
+  resumeToast: document.getElementById('resume-toast'),
+
+  fontSizeSlider: document.getElementById('font-size-slider'),
+  fontSizeValue: document.getElementById('font-size-value'),
+  fontFamilyGroup: document.getElementById('font-family-group'),
+  lineHeightSlider: document.getElementById('line-height-slider'),
+  lineHeightValue: document.getElementById('line-height-value'),
+  letterSpacingSlider: document.getElementById('letter-spacing-slider'),
+  letterSpacingValue: document.getElementById('letter-spacing-value'),
+  marginSlider: document.getElementById('margin-slider'),
+  marginValue: document.getElementById('margin-value'),
+  themeGroup: document.getElementById('theme-group'),
+  customSwatch: document.getElementById('custom-swatch'),
+  customColorInput: document.getElementById('custom-color-input'),
+  pagingToggle: document.getElementById('paging-toggle'),
+  animationToggle: document.getElementById('animation-toggle'),
+  animSpeedSlider: document.getElementById('anim-speed-slider'),
+  animSpeedValue: document.getElementById('anim-speed-value'),
+  directionOverrideGroup: document.getElementById('direction-override-group'),
+  tapReverseToggle: document.getElementById('tap-reverse-toggle'),
+  resetSettingsBtn: document.getElementById('reset-settings-btn')
+};
+
+/* =========================================================================
+   ユーティリティ
+   ========================================================================= */
+function resolvePath(baseDir, relativeHref) {
+  const cleanHref = relativeHref.split('#')[0];
+  if (!baseDir) return cleanHref;
+  const combined = (baseDir + '/' + cleanHref).split('/');
+  const stack = [];
+  for (const part of combined) {
+    if (part === '..') stack.pop();
+    else if (part === '.' || part === '') continue;
+    else stack.push(part);
+  }
+  return stack.join('/');
+}
+
+function containsVerticalWritingMode(text) {
+  return /(-epub-|-webkit-)?writing-mode\s*:\s*vertical-rl/i.test(text);
+}
+
+function bookFingerprint(file) {
+  return `${file.name}-${file.size}`;
+}
+
+function loadBookmark(fingerprint) {
+  try {
+    const raw = localStorage.getItem(STORAGE_BOOKMARK_PREFIX + fingerprint);
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) { return null; }
+}
+
+function saveBookmark() {
+  if (!state.fileFingerprint) return;
+  try {
+    localStorage.setItem(
+      STORAGE_BOOKMARK_PREFIX + state.fileFingerprint,
+      JSON.stringify({
+        chapterIndex: state.chapterIndex,
+        pageInChapter: state.pageInChapter,
+        savedAt: Date.now()
+      })
+    );
+  } catch (e) { /* ストレージ不可の環境では無視する */ }
+}
+
+function loadSettings() {
+  try {
+    const raw = localStorage.getItem(STORAGE_SETTINGS_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) { return null; }
+}
+
+function saveSettings() {
+  try {
+    localStorage.setItem(STORAGE_SETTINGS_KEY, JSON.stringify(state.settings));
+  } catch (e) { /* ストレージ不可の環境では無視する */ }
+}
+
+function showToast(message, durationMs) {
+  el.resumeToast.textContent = message;
+  el.resumeToast.style.display = 'block';
+  window.clearTimeout(showToast._timer);
+  showToast._timer = window.setTimeout(() => {
+    el.resumeToast.style.display = 'none';
+  }, durationMs || 2400);
+}
+
+function currentThemeColors() {
+  if (state.settings.useCustomColor) {
+    const bg = state.settings.customColor;
+    const fg = estimateReadableTextColor(bg);
+    return { bg, fg };
+  }
+  return THEME_PRESETS[state.settings.themeKey] || THEME_PRESETS.white;
+}
+
+/** 背景色の明度から読みやすい文字色（黒/白）を推定する */
+function estimateReadableTextColor(hex) {
+  const c = hex.replace('#', '');
+  const r = parseInt(c.substring(0, 2), 16);
+  const g = parseInt(c.substring(2, 4), 16);
+  const b = parseInt(c.substring(4, 6), 16);
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return luminance > 0.6 ? '#1a1a1a' : '#eeeeee';
+}
+
+/** 実際に適用する開き方向。手動上書き設定があればそれを優先する */
+function effectiveDirection() {
+  const override = state.settings.directionOverride;
+  if (override === 'vertical') return 'VERTICAL_RTL';
+  if (override === 'horizontal') return 'HORIZONTAL_LTR';
+  return state.book ? state.book.readingDirection : 'HORIZONTAL_LTR';
+}
+
+/* =========================================================================
+   EPUB解析
+   ========================================================================= */
+async function parseEpub(file) {
+  const zip = await JSZip.loadAsync(file);
+
+  const containerXml = await zip.file('META-INF/container.xml')?.async('text');
+  if (!containerXml) throw new Error('META-INF/container.xml が見つかりません（不正なEPUBファイルです）');
+
+  const containerDoc = new DOMParser().parseFromString(containerXml, 'application/xml');
+  const rootfile = containerDoc.querySelector('rootfile');
+  const opfPath = rootfile?.getAttribute('full-path');
+  if (!opfPath) throw new Error('container.xml内にrootfileが見つかりません');
+
+  const opfDir = opfPath.includes('/') ? opfPath.substring(0, opfPath.lastIndexOf('/')) : '';
+  const opfEntry = zip.file(opfPath);
+  if (!opfEntry) throw new Error(`OPFファイル (${opfPath}) が見つかりません`);
+  const opfXml = await opfEntry.async('text');
+
+  const opfDoc = new DOMParser().parseFromString(opfXml, 'application/xml');
+
+  const titleEl = opfDoc.querySelector('metadata title, title');
+  const title = titleEl?.textContent?.trim() || file.name.replace(/\.epub$/i, '');
+
+  const manifest = {};
+  opfDoc.querySelectorAll('manifest item').forEach((item) => {
+    const id = item.getAttribute('id');
+    const href = item.getAttribute('href');
+    const mediaType = item.getAttribute('media-type') || '';
+    if (id && href) manifest[id] = { href, mediaType };
+  });
+
+  const spineEl = opfDoc.querySelector('spine');
+  const pageProgressionDirection = spineEl?.getAttribute('page-progression-direction');
+
+  const spineIds = [];
+  opfDoc.querySelectorAll('spine itemref').forEach((itemref) => {
+    const idref = itemref.getAttribute('idref');
+    if (idref) spineIds.push(idref);
+  });
+
+  const chapters = spineIds
+    .map((idref) => manifest[idref] ? { idref, ...manifest[idref] } : null)
+    .filter(Boolean)
+    .map((m) => ({ id: m.idref, href: m.href, mediaType: m.mediaType }));
+
+  const readingDirection = await detectReadingDirection(zip, opfDir, chapters, pageProgressionDirection);
+
+  return { title, chapters, readingDirection, opfDir, zip };
+}
+
+/**
+ * 縦書き/横書きの自動判定。
+ * OPFに page-progression-direction の明示がなければ、章のCSSを検査する。
+ * 表紙ページなど先頭の章に本文用CSSが適用されていないケースがあるため、
+ * 判定の取りこぼしを防ぐ目的で先頭から最大5章まで走査する。
+ */
+async function detectReadingDirection(zip, opfDir, chapters, pageProgressionDirection) {
+  if (pageProgressionDirection?.toLowerCase() === 'rtl') return 'VERTICAL_RTL';
+
+  const scanCount = Math.min(chapters.length, 5);
+  for (let i = 0; i < scanCount; i++) {
+    const chapterPath = resolvePath(opfDir, chapters[i].href);
+    const chapterEntry = zip.file(chapterPath);
+    if (!chapterEntry) continue;
+
+    const chapterHtml = await chapterEntry.async('text');
+    if (containsVerticalWritingMode(chapterHtml)) return 'VERTICAL_RTL';
+
+    const chapterDir = chapterPath.includes('/')
+      ? chapterPath.substring(0, chapterPath.lastIndexOf('/')) : '';
+    const cssHrefs = [...chapterHtml.matchAll(
+      /<link[^>]+rel=["']stylesheet["'][^>]+href=["']([^"']+)["']/gi
+    )].map((m) => m[1]);
+
+    for (const cssHref of cssHrefs) {
+      const cssPath = resolvePath(chapterDir, cssHref);
+      const cssEntry = zip.file(cssPath);
+      if (!cssEntry) continue;
+      const cssText = await cssEntry.async('text');
+      if (containsVerticalWritingMode(cssText)) return 'VERTICAL_RTL';
+    }
+  }
+  return 'HORIZONTAL_LTR';
+}
+
+async function readChapterRawHtml(book, index) {
+  const chapter = book.chapters[index];
+  if (!chapter) throw new Error(`章インデックス ${index} は範囲外です`);
+  const path = resolvePath(book.opfDir, chapter.href);
+  const entry = book.zip.file(path);
+  if (!entry) throw new Error(`章ファイルが見つかりません: ${path}`);
+  return entry.async('text');
+}
+
+function chapterBaseDir(book, index) {
+  const chapter = book.chapters[index];
+  if (!chapter) return book.opfDir;
+  const path = resolvePath(book.opfDir, chapter.href);
+  return path.includes('/') ? path.substring(0, path.lastIndexOf('/')) : '';
+}
+
+const MIME_TYPES = {
+  png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif',
+  svg: 'image/svg+xml', css: 'text/css', otf: 'font/otf', ttf: 'font/ttf',
+  woff: 'font/woff', woff2: 'font/woff2'
+};
+
+/**
+ * EPUB本来のCSSのうち、ページ全体のレイアウトを支配してしまうプロパティだけを
+ * 無効化する。ビューアの縦横判定・段組みページングは常にビューア側が単独で
+ * 制御する必要があり、章のCSSに writing-mode や column-*, position 等が
+ * 残っていると、ビューアが組んだレイアウトと二重に効いて表示が崩れる
+ * （実際に発生した「2列に文字がバラけて表示される」不具合の原因）。
+ * 文字装飾・字下げ・強調などの見た目に関わる指定はそのまま活かす。
+ *
+ * ブロック({ ... })単位で分解し、各ブロック内の宣言をセミコロン区切りで
+ * 個別にフィルタリングすることで、同一ブロック内に複数のレイアウトプロパティが
+ * 連続していても確実に取り除く。
+ */
+function sanitizeChapterCss(cssText) {
+  const layoutProps = new Set([
+    'writing-mode', '-webkit-writing-mode', '-epub-writing-mode',
+    'column-width', '-webkit-column-width', '-moz-column-width',
+    'column-count', '-webkit-column-count', '-moz-column-count',
+    'column-gap', '-webkit-column-gap', '-moz-column-gap',
+    'position', 'overflow', 'overflow-x', 'overflow-y',
+    'height', 'min-height', 'max-height', 'width', 'min-width', 'max-width',
+    'transform', 'transition', 'top', 'left', 'right', 'bottom'
+  ]);
+
+  // { ... } ブロックを見つけて、中身の宣言だけをフィルタリングする
+  return cssText.replace(/\{([^{}]*)\}/g, (fullMatch, declBlock) => {
+    const filtered = declBlock
+      .split(';')
+      .map((decl) => decl.trim())
+      .filter((decl) => {
+        if (!decl) return false;
+        const propName = decl.split(':')[0]?.trim().toLowerCase();
+        return !layoutProps.has(propName);
+      })
+      .join('; ');
+    return filtered ? `{ ${filtered}; }` : '{}';
+  });
+}
+
+/**
+ * 章のXHTML全体から、本文(body内)のHTMLとEPUB本来のCSSを分離して取得する。
+ * これまでXHTML全体（<html><head>...を含む）をそのままiframeの本文領域に
+ * 埋め込んでいたため、<head>や<link>タグが本文中に紛れ込み、
+ * ビューア側の段組みCSSと衝突して表示が崩れる不具合があった。
+ * DOMParserで正しくパースし、body要素の中身だけを取り出す。
+ */
+async function extractChapterContent(book, index) {
+  const rawXhtml = await readChapterRawHtml(book, index);
+  const baseDir = chapterBaseDir(book, index);
+
+  let doc = new DOMParser().parseFromString(rawXhtml, 'application/xhtml+xml');
+  // parsererror要素はブラウザによって名前空間の扱いが異なり querySelector('parsererror')
+  // だけでは検出漏れが起こりうるため、要素名に部分一致するかもあわせて確認する。
+  const hasParseError = [...doc.getElementsByTagName('*')].some(
+    (elNode) => elNode.tagName && elNode.tagName.toLowerCase().includes('parsererror')
+  );
+  if (hasParseError || !doc.querySelector('body')) {
+    // 稀に厳密なXHTMLとして不正な章がある場合、HTMLパーサーへフォールバックする
+    doc = new DOMParser().parseFromString(rawXhtml, 'text/html');
+  }
+
+  const bodyEl = doc.querySelector('body');
+  const bodyHtmlRaw = bodyEl ? bodyEl.innerHTML : rawXhtml;
+
+  // <link rel="stylesheet"> のCSSを収集
+  const cssTexts = [];
+  const linkEls = [...doc.querySelectorAll('link[rel="stylesheet"]')];
+  for (const linkEl of linkEls) {
+    const href = linkEl.getAttribute('href');
+    if (!href) continue;
+    const cssPath = resolvePath(baseDir, href);
+    const cssEntry = book.zip.file(cssPath);
+    if (!cssEntry) continue;
+    const cssText = await cssEntry.async('text');
+    cssTexts.push(cssText);
+  }
+
+  // <style> インラインCSSも収集
+  const styleEls = [...doc.querySelectorAll('style')];
+  for (const styleEl of styleEls) {
+    if (styleEl.textContent) cssTexts.push(styleEl.textContent);
+  }
+
+  const sanitizedCss = cssTexts.map(sanitizeChapterCss).join('\n');
+
+  // 本文中の画像等の相対参照をdata URLへ置き換える
+  const inlinedBodyHtml = await inlineResources(book, bodyHtmlRaw, baseDir);
+
+  return { bodyHtml: inlinedBodyHtml, css: sanitizedCss };
+}
+
+async function inlineResources(book, html, baseDir) {
+  let result = html;
+  const matches = [...result.matchAll(/(?:src|href)=["']([^"']+)["']/gi)];
+  const seen = new Set();
+
+  for (const m of matches) {
+    const raw = m[1];
+    if (raw.startsWith('http') || raw.startsWith('data:') || raw.startsWith('#')) continue;
+    if (seen.has(raw)) continue;
+    seen.add(raw);
+
+    const resolvedPath = resolvePath(baseDir, raw);
+    const entry = book.zip.file(resolvedPath);
+    if (!entry) continue;
+
+    const ext = resolvedPath.split('.').pop().toLowerCase();
+    const mime = MIME_TYPES[ext] || 'application/octet-stream';
+
+    if (mime === 'text/css') {
+      const cssText = await entry.async('text');
+      const dataUrl = `data:text/css;base64,${btoa(unescape(encodeURIComponent(cssText)))}`;
+      result = result.split(raw).join(dataUrl);
+    } else {
+      const base64 = await entry.async('base64');
+      const dataUrl = `data:${mime};base64,${base64}`;
+      result = result.split(raw).join(dataUrl);
+    }
+  }
+  return result;
+}
+
+async function getChapterContent(index) {
+  if (state.chapterHtmlCache.has(index)) return state.chapterHtmlCache.get(index);
+  const content = await extractChapterContent(state.book, index);
+  state.chapterHtmlCache.set(index, content);
+  return content;
+}
+
+/* =========================================================================
+   ページネーション（要素単位の事前分割方式）
+
+   【設計変更の経緯】
+   これまでは章全体をCSS column-widthで丸ごと段組みし、transform: translateX
+   で列を横に送る方式だった。この方式は、1章が数千〜数万文字を超える
+   長大なXHTML（Web小説の書き出しでは1章に本1冊分、数十万文字が
+   収まっていることが珍しくない）に対して、以下の問題を引き起こしていた：
+     - scrollWidth が巨大な値になり、ページ移動量の丸め誤差が蓄積する
+     - ブラウザの段組みレイアウトエンジンが大量の列を安定して計算できず、
+       意図しない折り返しやレイアウト崩壊を起こす（実際に確認された、
+       文字が2列にバラバラに表示される不具合の直接原因）
+
+   【新方式】
+   章の本文を「見えないiframe」に一度だけ流し込み、本文直下の要素
+   （<p>, <h1> など）を1つずつ実測しながら「1画面に収まる範囲」で
+   区切ってページ配列を作る。表示用iframeには、その時点で見せたい
+   1ページ分のHTMLだけを渡す。column も大きな transform も使わないため、
+   どれだけ章が長くても、1ページあたりの計算量・誤差は常に一定になる。
+   ========================================================================= */
+
+/**
+ * 計測専用の非表示iframeを1つ生成し、DOMに追加する。
+ * 実際の表示用iframe(el.contentFrame)と完全に同じCSS環境を再現するため、
+ * 同じ buildMeasureDocument でHTMLを構築して読み込む。
+ */
+function createMeasureFrame() {
+  const frame = document.createElement('iframe');
+  frame.style.position = 'fixed';
+  frame.style.top = '-10000px';
+  frame.style.left = '-10000px';
+  frame.style.visibility = 'hidden';
+  frame.style.pointerEvents = 'none';
+  document.body.appendChild(frame);
+  return frame;
+}
+
+/**
+ * ページ分割の計測に使うドキュメントを構築する。
+ * 実際に表示する buildPageDocument と全く同じCSS構造（#viewportのpadding、
+ * box-sizing等）で組み立てることが重要。計測時と表示時でレイアウトの
+ * 前提が食い違うと、計測では収まると判定したのに実際の表示では
+ * はみ出す（またはその逆）という不一致が起き、「文の途中で不自然に切れる」
+ * 「余白が多い」といった症状の直接原因になる。
+ */
+function buildMeasureDocument(chapterCss, s, vertical, viewportWidthPx, viewportHeightPx) {
+  return `<!DOCTYPE html><html><head><meta charset="utf-8">
+<style>
+  * { box-sizing: border-box; }
+  /* html/bodyには伸縮方向の制約を与えない。制約は #measure-root だけに
+     与えることで、コンテンツが本来伸びるべき方向（横書きなら縦、
+     縦書きなら横）に自由に伸び、scrollHeight/scrollWidthで
+     正しい実測値が取れるようにする。 */
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: ${FONT_FAMILIES[s.fontFamily] || FONT_FAMILIES.serif};
+    font-size: ${s.fontSizePx}px;
+    line-height: ${s.lineHeight};
+    letter-spacing: ${s.letterSpacingPx}px;
+  }
+  img { max-width: 100%; height: auto; }
+  a { color: inherit; }
+  /* 実際の表示(#viewport)と全く同じpadding量を再現し、計測時の実効エリアを一致させる。
+     固定するのは「ページ送りの単位となる軸」の逆側だけ：
+     横書きは幅を固定して縦に伸ばす、縦書きは高さを固定して横に伸ばす。 */
+  #measure-root {
+    padding: ${s.marginPx}px;
+    box-sizing: border-box;
+    ${vertical
+      ? `writing-mode: vertical-rl; -epub-writing-mode: vertical-rl; height: ${viewportHeightPx}px;`
+      : `width: ${viewportWidthPx}px;`}
+  }
+</style>
+<style>${chapterCss}</style>
+</head>
+<body><div id="measure-root"></div></body></html>`;
+}
+
+/**
+ * 章の本文HTMLを、実際に画面に収まる単位でページ分割する。
+ * 戻り値は「各ページに含めるHTML文字列」の配列。
+ *
+ * 手順：
+ *   1. 計測用iframeに章全体を一度だけ流し込む
+ *   2. #measure-root 直下の子要素を先頭から順に見ていき、
+ *      現在集めている要素群の合計の高さ（横書き）または幅（縦書き）が
+ *      1画面分を超えたら、そこで区切って次のページへ
+ *   3. 1つの要素だけで1画面に収まらない場合（非常に長い段落など）は、
+ *      やむを得ずその要素単独で1ページとする（テキストノード単位への
+ *      細分化は行わない。段落が多少画面をはみ出しても、極端に長い
+ *      1文が分割されて読みにくくなるより実用上望ましいため）
+ */
+async function paginateChapter(bodyHtml, chapterCss, vertical, s, viewportWidthPx, viewportHeightPx) {
+  const measureFrame = createMeasureFrame();
+  measureFrame.style.width = viewportWidthPx + 'px';
+  measureFrame.style.height = viewportHeightPx + 'px';
+
+  try {
+    await new Promise((resolve) => {
+      measureFrame.onload = resolve;
+      measureFrame.srcdoc = buildMeasureDocument(chapterCss, s, vertical, viewportWidthPx, viewportHeightPx);
+    });
+
+    const measureDoc = measureFrame.contentDocument;
+    const root = measureDoc.getElementById('measure-root');
+    root.innerHTML = bodyHtml;
+
+    const children = [...root.children];
+    if (children.length === 0) {
+      return [bodyHtml]; // 子要素を持たない特殊な章はそのまま1ページにする
+    }
+
+    const pages = [];
+    // #measure-root は実際の表示(#viewport)と同じ padding: marginPx を持つため、
+    // 本文が実際に使えるエリアはビューポート全体から余白の分だけ狭くなる。
+    // ここで limit をその「内側の実効サイズ」に正確に合わせないと、
+    // 計測時に「まだ入る」と判定した内容が実際の表示ではみ出してしまう
+    // （これが文の途中で不自然に切れる不具合の直接原因だった）。
+    const limit = vertical
+      ? viewportWidthPx - s.marginPx * 2
+      : viewportHeightPx - s.marginPx * 2;
+
+    // 実際に要素を1つずつ measureContainer に追加しながら占有量を測る。
+    // クローンして毎回ページ全体を再構築するのではなく、要素を都度1つ足すだけ
+    // なので、章が長大でも計算量は要素数に対してほぼ線形に収まる。
+    const measureContainer = measureDoc.createElement('div');
+    root.innerHTML = '';
+    root.appendChild(measureContainer);
+
+    let pageStartIndex = 0;
+    let i = 0;
+    while (i < children.length) {
+      measureContainer.appendChild(children[i]);
+      const extent = vertical ? measureContainer.scrollWidth : measureContainer.scrollHeight;
+
+      if (extent > limit) {
+        if (measureContainer.children.length === 1) {
+          // 1要素だけで既にページをはみ出す場合、やむを得ずこの要素単独で1ページとする
+          pages.push(measureContainer.innerHTML);
+          measureContainer.innerHTML = '';
+          pageStartIndex = i + 1;
+          i++;
+        } else {
+          // 直前の要素まででページを確定し、はみ出した要素は次ページの先頭へ戻す
+          const overflowing = measureContainer.removeChild(measureContainer.lastElementChild);
+          pages.push(measureContainer.innerHTML);
+          measureContainer.innerHTML = '';
+          measureContainer.appendChild(overflowing);
+          pageStartIndex = i;
+          // overflowing要素は再度measureContainerに乗ったままなので、
+          // 次のループでは次の要素から続けて追加していく（iはそのまま進める）
+          i++;
+        }
+      } else {
+        i++;
+      }
+    }
+
+    // 最後まで見てもページが確定していない残りの要素をまとめて最終ページにする
+    if (measureContainer.children.length > 0) {
+      pages.push(measureContainer.innerHTML);
+    }
+
+    return pages.length > 0 ? pages : [bodyHtml];
+  } finally {
+    // 計測が終わったら不要になった計測用iframeは破棄する（メモリリーク防止）
+    measureFrame.remove();
+  }
+}
+
+/**
+ * 表示用iframeに1ページ分のHTMLを描画するためのドキュメントを構築する。
+ * column も transform も使わず、渡された1ページ分のHTMLをそのまま表示するだけ。
+ * ページ送りは「別のページのHTMLで丸ごと差し替える」ことで実現するため、
+ * どれだけ章が長くても計算コスト・誤差は常に一定になる。
+ */
+function buildPageDocument(pageHtml, chapterCss, vertical, s, colors) {
+  const animCss = s.animationEnabled
+    ? `transition: opacity ${s.animationSpeedSec}s ease; will-change: opacity;`
+    : `transition: none;`;
+
+  const layoutCss = vertical
+    ? `
+      html, body { margin:0; padding:0; height:100%; overflow:hidden; }
+      #viewport {
+        padding: ${s.marginPx}px; height: 100%; box-sizing: border-box; overflow: hidden;
+        writing-mode: vertical-rl; -epub-writing-mode: vertical-rl;
+      }
+    `
+    : `
+      html, body { margin:0; padding:0; height:100%; overflow:hidden; }
+      #viewport { padding: ${s.marginPx}px; height: 100%; box-sizing: border-box; overflow: hidden; }
+    `;
+
+  return `<!DOCTYPE html><html><head><meta charset="utf-8">
+<style>
+  * { box-sizing: border-box; }
+  html, body { background: ${colors.bg}; color: ${colors.fg}; }
+  body {
+    font-family: ${FONT_FAMILIES[s.fontFamily] || FONT_FAMILIES.serif};
+    font-size: ${s.fontSizePx}px;
+    line-height: ${s.lineHeight};
+    letter-spacing: ${s.letterSpacingPx}px;
+  }
+  img { max-width: 100%; height: auto; }
+  a { color: inherit; }
+  #viewport { ${animCss} }
+</style>
+<style id="chapter-original-css">
+  /* EPUB本来のCSS（文字装飾・字下げ等）。レイアウトを支配するプロパティは
+     sanitizeChapterCss() によって除去済み。 */
+  ${chapterCss}
+</style>
+<style id="viewer-layout-css">
+  ${layoutCss}
+</style>
+</head>
+<body>
+  <div id="viewport">${pageHtml}</div>
+  <script>
+    // 背景色・アニメーション設定など、ページ境界に影響しない変更は
+    // 親からのメッセージで直接スタイルを書き換えるだけで即時反映する。
+    window.addEventListener('message', function(ev) {
+      var data = ev.data || {};
+      if (data.type !== 'epub-set-live-style') return;
+      document.documentElement.style.background = data.bg;
+      document.body.style.background = data.bg;
+      document.body.style.color = data.fg;
+      var viewportEl = document.getElementById('viewport');
+      if (viewportEl) {
+        viewportEl.style.transition = data.animationEnabled
+          ? ('opacity ' + data.animationSpeedSec + 's ease')
+          : 'none';
+      }
+    });
+  <\/script>
+</body></html>`;
+}
+
+/**
+ * 非ページング（章単位のみ・自由スクロール）モード用のドキュメント。
+ * 章全体をそのまま流し込み、縦書きなら横スクロール、横書きなら縦スクロールにする。
+ */
+function buildScrollDocument(bodyHtml, chapterCss, vertical, s, colors) {
+  const layoutCss = vertical
+    ? `
+      html, body { margin:0; padding:0; height:100%; overflow: hidden; }
+      #viewport {
+        padding: ${s.marginPx}px; box-sizing: border-box; height: 100%;
+        writing-mode: vertical-rl; -epub-writing-mode: vertical-rl;
+        overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch;
+      }
+    `
+    : `
+      html, body { margin:0; padding:0; height:100%; overflow: hidden; }
+      #viewport {
+        padding: ${s.marginPx}px; box-sizing: border-box; height: 100%;
+        overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch;
+      }
+    `;
+
+  return `<!DOCTYPE html><html><head><meta charset="utf-8">
+<style>
+  * { box-sizing: border-box; }
+  html, body { background: ${colors.bg}; color: ${colors.fg}; }
+  body {
+    font-family: ${FONT_FAMILIES[s.fontFamily] || FONT_FAMILIES.serif};
+    font-size: ${s.fontSizePx}px;
+    line-height: ${s.lineHeight};
+    letter-spacing: ${s.letterSpacingPx}px;
+  }
+  img { max-width: 100%; height: auto; }
+  a { color: inherit; }
+</style>
+<style id="chapter-original-css">${chapterCss}</style>
+<style id="viewer-layout-css">${layoutCss}</style>
+</head>
+<body>
+  <div id="viewport">${bodyHtml}</div>
+  <script>
+    window.addEventListener('message', function(ev) {
+      var data = ev.data || {};
+      if (data.type !== 'epub-set-live-style') return;
+      document.documentElement.style.background = data.bg;
+      document.body.style.background = data.bg;
+      document.body.style.color = data.fg;
+    });
+  <\/script>
+</body></html>`;
+}
+
+function postToFrame(message) {
+  el.contentFrame.contentWindow?.postMessage(message, '*');
+}
+
+function updateFooter() {
+  el.chapterProgress.textContent = `章 ${state.chapterIndex + 1} / ${state.book.chapters.length}`;
+  el.pageProgress.textContent = state.settings.pagingEnabled
+    ? `ページ ${state.pageInChapter + 1} / ${state.totalPagesInChapter}` : '';
+
+  el.footerNavBtns.classList.toggle('visible', !state.settings.pagingEnabled);
+  el.footerPrevBtn.disabled = state.chapterIndex <= 0;
+  el.footerNextBtn.disabled = state.chapterIndex >= state.book.chapters.length - 1;
+}
+
+/**
+ * 現在のビューポートサイズ（iframeが実際に占める領域）を取得する。
+ * ページ分割の計測に使うため、実際の表示領域と正確に一致させる。
+ */
+/**
+ * 現在のビューポートサイズ（iframeが実際に占める領域）を取得する。
+ * ページ分割の計測に使うため、実際の表示領域と正確に一致させる。
+ * iframeがdisplay:noneなど非表示状態のときは0を返してしまうことがあるため、
+ * 明らかに異常な値の場合はウィンドウサイズから妥当な値にフォールバックする
+ * （本来はvisibility:hiddenで常にレイアウトサイズを維持しているため通常は
+ * 発生しないが、念のための保険）。
+ */
+function getViewportSize() {
+  const rect = el.contentFrame.getBoundingClientRect();
+  const minSensibleSize = 50;
+  const width = rect.width >= minSensibleSize ? rect.width : window.innerWidth;
+  const height = rect.height >= minSensibleSize ? rect.height : window.innerHeight;
+  return {
+    width: Math.max(1, Math.round(width)),
+    height: Math.max(1, Math.round(height))
+  };
+}
+
+/**
+ * 章のページ分割結果をキャッシュするマップ。
+ * キーは「章インデックス + 現在のレイアウトに影響する設定値」を組み合わせたもの。
+ * フォントサイズや余白を変えるとページ境界も変わるため、設定値が変わったら
+ * 再分割が必要になる。
+ */
+const paginationCache = new Map();
+
+function paginationCacheKey(index, vertical, s, viewportW, viewportH) {
+  // fileFingerprintを含めることで、別の本を開いた際に同じ章インデックス・
+  // 同じ設定値でもキャッシュが衝突しないようにする（clearし忘れの保険も兼ねる）。
+  return [
+    state.fileFingerprint, index, vertical ? 'v' : 'h', s.fontSizePx, s.fontFamily, s.lineHeight,
+    s.letterSpacingPx, s.marginPx, viewportW, viewportH
+  ].join('|');
+}
+
+/* =========================================================================
+   画面描画・ページ制御
+   ========================================================================= */
+let renderRequestSeq = 0;
+
+async function renderChapter(index, resumePage) {
+  const content = await getChapterContent(index);
+  const vertical = effectiveDirection() === 'VERTICAL_RTL';
+  const colors = currentThemeColors();
+  const mySeq = ++renderRequestSeq;
+
+  if (!state.settings.pagingEnabled) {
+    // 非ページングモード：章全体をそのままスクロール表示する。分割不要。
+    const doc = buildScrollDocument(content.bodyHtml, content.css, vertical, state.settings, colors);
+    if (mySeq !== renderRequestSeq) return;
+    el.contentFrame.srcdoc = doc;
+    state.currentChapterPages = null;
+    state.totalPagesInChapter = 1;
+    state.pageInChapter = 0;
+    updateFooter();
+    return;
+  }
+
+  const viewportSize = getViewportSize();
+  const cacheKey = paginationCacheKey(index, vertical, state.settings, viewportSize.width, viewportSize.height);
+
+  let pages;
+  if (paginationCache.has(cacheKey)) {
+    pages = paginationCache.get(cacheKey);
+  } else {
+    pages = await paginateChapter(
+      content.bodyHtml, content.css, vertical, state.settings, viewportSize.width, viewportSize.height
+    );
+    if (mySeq !== renderRequestSeq) return; // 計測中に次の章へ移動していたら破棄する
+    paginationCache.set(cacheKey, pages);
+  }
+
+  if (mySeq !== renderRequestSeq) return;
+
+  state.currentChapterPages = pages;
+  state.totalPagesInChapter = pages.length;
+  const targetPage = Math.min(Math.max(0, resumePage ?? 0), pages.length - 1);
+  state.pageInChapter = targetPage;
+
+  const doc = buildPageDocument(pages[targetPage], content.css, vertical, state.settings, colors);
+  if (mySeq !== renderRequestSeq) return;
+  el.contentFrame.srcdoc = doc;
+  updateFooter();
+}
+
+/** ページング中、現在ページのHTMLだけを表示用iframeへ差し替える（再計測なし・軽量） */
+function renderCurrentPageOnly() {
+  if (!state.currentChapterPages) return;
+  const vertical = effectiveDirection() === 'VERTICAL_RTL';
+  const colors = currentThemeColors();
+  const pageHtml = state.currentChapterPages[state.pageInChapter];
+  getChapterContent(state.chapterIndex).then((content) => {
+    const doc = buildPageDocument(pageHtml, content.css, vertical, state.settings, colors);
+    el.contentFrame.srcdoc = doc;
+    updateFooter();
+    saveBookmark();
+  });
+}
+
+async function goToChapter(index, resumePage) {
+  if (!state.book) return;
+  if (index < 0 || index >= state.book.chapters.length) return;
+  const isChapterChange = index !== state.chapterIndex;
+  if (isChapterChange) {
+    // 章をまたぐ移動は、ページ分割（特に長大な章）で時間がかかることがあるため
+    // ローディング表示を出す。同じ章内でのページ送りは renderCurrentPageOnly
+    // 側の軽量パスを通るため、ここは通らない。
+    // display:none ではなく visibility:hidden を使うのが重要：
+    // display:none にすると要素のレイアウトサイズが0になり、
+    // ページ分割の計測(getViewportSize)がiframeの実サイズを取得できず
+    // 誤った境界でページを区切ってしまう（文の途中で不自然に切れる不具合の原因）。
+    el.contentFrame.style.visibility = 'hidden';
+    el.loadingState.style.display = 'flex';
+  }
+  try {
+    state.chapterIndex = index;
+    await renderChapter(index, resumePage ?? 0);
+    saveBookmark();
+    if (isChapterChange) {
+      el.loadingState.style.display = 'none';
+      el.contentFrame.style.visibility = 'visible';
+    }
+  } catch (e) {
+    el.loadingState.style.display = 'none';
+    el.contentFrame.style.visibility = 'hidden';
+    setTapZonesVisible(false);
+    el.footer.style.display = 'none';
+    el.errorState.style.display = 'flex';
+    el.errorState.textContent = 'エラー: 章の表示に失敗しました（' + (e.message || '不明なエラー') + '）';
+    throw e;
+  }
+}
+
+async function advancePage() {
+  if (state.isTurning) return;
+  if (!state.settings.pagingEnabled) {
+    state.isTurning = true;
+    try {
+      await goToChapter(state.chapterIndex + 1, 0);
+    } catch (e) {
+      // goToChapter側で既にエラー画面へ切り替え済み。
+    } finally {
+      state.isTurning = false;
+    }
+    return;
+  }
+  if (state.pageInChapter + 1 < state.totalPagesInChapter) {
+    state.isTurning = true;
+    state.pageInChapter += 1;
+    renderCurrentPageOnly();
+    const wait = state.settings.animationEnabled ? state.settings.animationSpeedSec * 1000 : 0;
+    setTimeout(() => { state.isTurning = false; }, wait);
+  } else if (state.chapterIndex + 1 < state.book.chapters.length) {
+    state.isTurning = true;
+    try {
+      await goToChapter(state.chapterIndex + 1, 0);
+    } catch (e) {
+      // goToChapter側で既にエラー画面へ切り替え済み。
+    } finally {
+      state.isTurning = false;
+    }
+  }
+}
+
+async function retreatPage() {
+  if (state.isTurning) return;
+  if (!state.settings.pagingEnabled) {
+    state.isTurning = true;
+    try {
+      await goToChapter(state.chapterIndex - 1, 0);
+    } catch (e) {
+      // goToChapter側で既にエラー画面へ切り替え済み。
+    } finally {
+      state.isTurning = false;
+    }
+    return;
+  }
+  if (state.pageInChapter - 1 >= 0) {
+    state.isTurning = true;
+    state.pageInChapter -= 1;
+    renderCurrentPageOnly();
+    const wait = state.settings.animationEnabled ? state.settings.animationSpeedSec * 1000 : 0;
+    setTimeout(() => { state.isTurning = false; }, wait);
+  } else if (state.chapterIndex - 1 >= 0) {
+    state.isTurning = true;
+    try {
+      // 前章の最終ページへ。renderChapter側で総ページ数にクランプされるため
+      // 大きな値を渡しておけば自動的に最終ページが選ばれる。
+      await goToChapter(state.chapterIndex - 1, Number.MAX_SAFE_INTEGER);
+    } catch (e) {
+      // goToChapter側で既にエラー画面へ切り替え済み。
+    } finally {
+      state.isTurning = false;
+    }
+  }
+}
+
+function handleTap(side) {
+  if (!state.book) return;
+  const vertical = effectiveDirection() === 'VERTICAL_RTL';
+  let goForward = vertical ? side === 'left' : side === 'right';
+  if (state.settings.tapReversed) goForward = !goForward;
+  if (goForward) advancePage(); else retreatPage();
+}
+
+/* =========================================================================
+   設定の即時反映
+   ========================================================================= */
+/**
+ * 背景色・アニメーション設定など、ページ分割そのものに影響しない変更は
+ * iframeへ直接メッセージを送って即時反映する（再分割・再描画不要で軽量）。
+ */
+function applyStyleLiveOnly() {
+  const colors = currentThemeColors();
+  postToFrame({
+    type: 'epub-set-live-style',
+    bg: colors.bg,
+    fg: colors.fg,
+    animationEnabled: state.settings.animationEnabled,
+    animationSpeedSec: state.settings.animationSpeedSec
+  });
+}
+
+/**
+ * フォントサイズ・行間・文字間隔・余白など、1ページに収まる文字量そのものが
+ * 変わる設定は、ページ境界を再計算する必要があるため章の再分割が必要。
+ */
+async function rerenderCurrentChapter() {
+  if (!state.book) return;
+  // レイアウトに影響する設定が変わった場合のみ、このキャッシュキー生成の前提が
+  // 変わるため、古いキャッシュを世代ごと無効化する必要はない
+  // （paginationCacheKeyに設定値そのものを含めているため、古いキーは自然に使われなくなる）。
+  const keepPage = state.settings.pagingEnabled ? state.pageInChapter : 0;
+  try {
+    await goToChapter(state.chapterIndex, keepPage);
+  } catch (e) {
+    // goToChapter側で既にエラー画面へ切り替え済み。設定パネル自体の操作は継続できるようにする。
+  }
+}
+
+
+/* =========================================================================
+   ファイル読み込みフロー
+   ========================================================================= */
+async function handleFile(file) {
+  if (!file) return;
+
+  el.idleState.style.display = 'none';
+  el.errorState.style.display = 'none';
+  el.loadingState.style.display = 'flex';
+  // display:none ではなく visibility:hidden を使う（理由は goToChapter 内のコメント参照）。
+  // これによりページ分割の計測時、iframeは常に正しいレイアウトサイズを持つ。
+  el.contentFrame.style.visibility = 'hidden';
+  el.contentFrame.style.display = 'block';
+  setTapZonesVisible(false);
+  el.footer.style.display = 'none';
+
+  try {
+    const fingerprint = bookFingerprint(file);
+    const parsedBook = await parseEpub(file);
+
+    state.book = parsedBook;
+    state.fileFingerprint = fingerprint;
+    state.chapterHtmlCache.clear();
+    // paginationCacheKeyは章インデックス+設定値のみで構成されており本自体を
+    // 区別しないため、別の本を開いた際に古い本のページ分割結果を誤って
+    // 使い回してしまわないよう、ここで確実にクリアする。
+    paginationCache.clear();
+
+    el.bookTitle.textContent = parsedBook.title;
+    updateDirectionBadge();
+
+    const bookmark = loadBookmark(fingerprint);
+    const startChapter = (bookmark && bookmark.chapterIndex < parsedBook.chapters.length) ? bookmark.chapterIndex : 0;
+    const startPage = bookmark ? bookmark.pageInChapter : 0;
+
+    // 章のページ分割（特に長大な章）には時間がかかることがあるため、
+    // ローディング表示は実際の描画が完了するまで出し続ける。
+    // state.chapterIndexの初期値は0のため、startChapterが0の場合
+    // goToChapter内のisChapterChange判定はfalseになり、そちらの
+    // visibility制御は発動しない。ここで明示的にvisibleへ戻す。
+    await goToChapter(startChapter, startPage);
+
+    el.loadingState.style.display = 'none';
+    el.contentFrame.style.visibility = 'visible';
+    setTapZonesVisible(true);
+    el.footer.style.display = 'flex';
+
+    if (bookmark) showToast('前回の続きから再開しました');
+  } catch (e) {
+    el.loadingState.style.display = 'none';
+    el.errorState.style.display = 'flex';
+    el.errorState.textContent = 'エラー: ' + (e.message || 'EPUBの読み込みに失敗しました');
+  }
+}
+
+function updateDirectionBadge() {
+  const dir = effectiveDirection();
+  el.directionBadge.style.display = 'inline-block';
+  const isOverridden = state.settings.directionOverride !== 'auto';
+  el.directionBadge.textContent =
+    (dir === 'VERTICAL_RTL' ? '縦書き・右開き' : '横書き・左開き') + (isOverridden ? '（手動）' : '');
+}
+
+function setTapZonesVisible(visible) {
+  [el.tapLeft, el.tapCenter, el.tapRight].forEach((zoneEl) => {
+    zoneEl.classList.toggle('book-loaded', visible);
+  });
+  syncTapZoneInteractivity();
+}
+
+/**
+ * 章内ページ送りがOFFのとき、タップ領域が最前面(z-index:5)に居座ったままだと
+ * iframe内本文への縦スクロール操作（ドラッグ・ホイール・タッチ）を遮ってしまい、
+ * 「下方向へスクロールできない」不具合の原因になる。
+ * そのためOFF時はタップ領域自体をDOM表示から外し(display:none)、
+ * すべての操作をそのままiframeへ届くようにする。
+ * 表示制御は book-loaded / paging-disabled の2クラスのみで行い、
+ * インラインstyle.displayとの二重管理を避ける。
+ */
+function syncTapZoneInteractivity() {
+  const pagingOn = state.settings.pagingEnabled;
+  [el.tapLeft, el.tapCenter, el.tapRight].forEach((zoneEl) => {
+    zoneEl.classList.toggle('paging-disabled', !pagingOn);
+  });
+}
+
+/* =========================================================================
+   設定UIの初期化・イベントバインド
+   ========================================================================= */
+function initSettingsUI() {
+  const saved = loadSettings();
+  if (saved) state.settings = { ...DEFAULT_SETTINGS, ...saved };
+
+  syncAllSettingsUI();
+  syncTapZoneInteractivity();
+
+  el.fontSizeSlider.addEventListener('input', async (e) => {
+    state.settings.fontSizePx = Number(e.target.value);
+    el.fontSizeValue.textContent = state.settings.fontSizePx + 'px';
+    saveSettings();
+    await rerenderCurrentChapter();
+  });
+
+  el.fontFamilyGroup.addEventListener('click', async (e) => {
+    const btn = e.target.closest('button[data-value]');
+    if (!btn) return;
+    state.settings.fontFamily = btn.dataset.value;
+    syncSegmented(el.fontFamilyGroup, state.settings.fontFamily);
+    saveSettings();
+    await rerenderCurrentChapter();
+  });
+
+  el.lineHeightSlider.addEventListener('input', async (e) => {
+    state.settings.lineHeight = Number(e.target.value);
+    el.lineHeightValue.textContent = state.settings.lineHeight.toFixed(1);
+    saveSettings();
+    await rerenderCurrentChapter();
+  });
+
+  el.letterSpacingSlider.addEventListener('input', async (e) => {
+    state.settings.letterSpacingPx = Number(e.target.value);
+    el.letterSpacingValue.textContent = state.settings.letterSpacingPx + 'px';
+    saveSettings();
+    await rerenderCurrentChapter();
+  });
+
+  el.marginSlider.addEventListener('input', async (e) => {
+    state.settings.marginPx = Number(e.target.value);
+    el.marginValue.textContent = state.settings.marginPx + 'px';
+    saveSettings();
+    await rerenderCurrentChapter();
+  });
+
+  el.themeGroup.addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-value]');
+    if (!btn) return;
+    state.settings.themeKey = btn.dataset.value;
+    state.settings.useCustomColor = false;
+    syncThemeSwatches();
+    saveSettings();
+    applyStyleLiveOnly();
+  });
+
+  el.customColorInput.addEventListener('input', (e) => {
+    state.settings.customColor = e.target.value;
+    state.settings.useCustomColor = true;
+    syncThemeSwatches();
+    saveSettings();
+    applyStyleLiveOnly();
+  });
+
+  el.pagingToggle.addEventListener('click', async () => {
+    state.settings.pagingEnabled = !state.settings.pagingEnabled;
+    syncToggle(el.pagingToggle, state.settings.pagingEnabled);
+    saveSettings();
+    syncTapZoneInteractivity();
+    await rerenderCurrentChapter();
+  });
+
+  el.animationToggle.addEventListener('click', () => {
+    state.settings.animationEnabled = !state.settings.animationEnabled;
+    syncToggle(el.animationToggle, state.settings.animationEnabled);
+    saveSettings();
+    applyStyleLiveOnly();
+  });
+
+  el.animSpeedSlider.addEventListener('input', (e) => {
+    state.settings.animationSpeedSec = Number(e.target.value);
+    el.animSpeedValue.textContent = state.settings.animationSpeedSec.toFixed(2) + 's';
+    saveSettings();
+    applyStyleLiveOnly();
+  });
+
+  el.directionOverrideGroup.addEventListener('click', async (e) => {
+    const btn = e.target.closest('button[data-value]');
+    if (!btn) return;
+    state.settings.directionOverride = btn.dataset.value;
+    syncSegmented(el.directionOverrideGroup, state.settings.directionOverride);
+    saveSettings();
+    updateDirectionBadge();
+    await rerenderCurrentChapter();
+  });
+
+  el.tapReverseToggle.addEventListener('click', () => {
+    state.settings.tapReversed = !state.settings.tapReversed;
+    syncToggle(el.tapReverseToggle, state.settings.tapReversed);
+    saveSettings();
+  });
+
+  el.resetSettingsBtn.addEventListener('click', async () => {
+    state.settings = { ...DEFAULT_SETTINGS };
+    saveSettings();
+    syncAllSettingsUI();
+    syncTapZoneInteractivity();
+    updateDirectionBadge();
+    await rerenderCurrentChapter();
+    showToast('表示設定をリセットしました');
+  });
+}
+
+function syncAllSettingsUI() {
+  const s = state.settings;
+  el.fontSizeSlider.value = s.fontSizePx;
+  el.fontSizeValue.textContent = s.fontSizePx + 'px';
+  syncSegmented(el.fontFamilyGroup, s.fontFamily);
+
+  el.lineHeightSlider.value = s.lineHeight;
+  el.lineHeightValue.textContent = s.lineHeight.toFixed(1);
+
+  el.letterSpacingSlider.value = s.letterSpacingPx;
+  el.letterSpacingValue.textContent = s.letterSpacingPx + 'px';
+
+  el.marginSlider.value = s.marginPx;
+  el.marginValue.textContent = s.marginPx + 'px';
+
+  syncThemeSwatches();
+
+  syncToggle(el.pagingToggle, s.pagingEnabled);
+  syncToggle(el.animationToggle, s.animationEnabled);
+  el.animSpeedSlider.value = s.animationSpeedSec;
+  el.animSpeedValue.textContent = s.animationSpeedSec.toFixed(2) + 's';
+
+  syncSegmented(el.directionOverrideGroup, s.directionOverride);
+  syncToggle(el.tapReverseToggle, s.tapReversed);
+
+  el.customColorInput.value = s.customColor;
+}
+
+function syncSegmented(groupEl, value) {
+  [...groupEl.querySelectorAll('button[data-value]')].forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.value === value);
+  });
+}
+
+function syncThemeSwatches() {
+  const s = state.settings;
+  [...el.themeGroup.querySelectorAll('.swatch[data-value]')].forEach((btn) => {
+    btn.classList.toggle('active', !s.useCustomColor && btn.dataset.value === s.themeKey);
+  });
+  el.customSwatch.classList.toggle('active', s.useCustomColor);
+}
+
+function syncToggle(buttonEl, isOn) {
+  buttonEl.classList.toggle('on', isOn);
+}
+
+/* =========================================================================
+   イベントバインド（全体）
+   ========================================================================= */
+function initEvents() {
+  el.settingsToggleBtn.addEventListener('click', () => {
+    el.settingsOverlay.classList.add('open');
+  });
+  el.settingsCloseBtn.addEventListener('click', () => {
+    el.settingsOverlay.classList.remove('open');
+  });
+  el.settingsOverlay.addEventListener('click', (e) => {
+    if (e.target === el.settingsOverlay) el.settingsOverlay.classList.remove('open');
+  });
+
+  el.openFileBtn.addEventListener('click', () => el.fileInput.click());
+  el.idleOpenBtn.addEventListener('click', () => el.fileInput.click());
+  el.fileInput.addEventListener('change', (e) => {
+    const file = e.target.files?.[0];
+    handleFile(file);
+    e.target.value = '';
+  });
+
+  el.tapLeft.addEventListener('click', () => handleTap('left'));
+  el.tapRight.addEventListener('click', () => handleTap('right'));
+
+  el.footerPrevBtn.addEventListener('click', async () => {
+    if (state.isTurning) return;
+    state.isTurning = true;
+    try {
+      await goToChapter(state.chapterIndex - 1, 0);
+    } catch (e) {
+      // goToChapter側で既にエラー画面へ切り替え済み。
+    } finally {
+      state.isTurning = false;
+    }
+  });
+  el.footerNextBtn.addEventListener('click', async () => {
+    if (state.isTurning) return;
+    state.isTurning = true;
+    try {
+      await goToChapter(state.chapterIndex + 1, 0);
+    } catch (e) {
+      // goToChapter側で既にエラー画面へ切り替え済み。
+    } finally {
+      state.isTurning = false;
+    }
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (!state.book) return;
+    if (e.key === 'ArrowRight') advancePage();
+    if (e.key === 'ArrowLeft') retreatPage();
+    if (e.key === 'Escape') el.settingsOverlay.classList.remove('open');
+  });
+
+  window.addEventListener('beforeunload', () => saveBookmark());
+}
+
+/* =========================================================================
+   起動
+   ========================================================================= */
+function boot() {
+  initSettingsUI();
+  initEvents();
+}
+
+boot();
+
+</script>
+</body>
+</html>
